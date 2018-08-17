@@ -1,0 +1,21 @@
+[package]
+name = "futurize"
+version = "0.1.0"
+authors = ["Arvid E. Picciani <aep@exys.org>"]
+license = "MIT"
+description = "Future worker boilerplate codgen"
+repository = "https://github.com/aep/futurize"
+
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "0.6.6"
+syn = "0.14.8"
+proc-macro2 = "0.4.12"
+futures = "0.1.23"
+failure = "0.1.2"
+heck = "0.3.0"
+tokio = "0.1.7"
+
