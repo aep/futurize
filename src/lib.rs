@@ -4,7 +4,6 @@ extern crate proc_macro;
 extern crate proc_macro2;
 extern crate futures;
 extern crate syn;
-extern crate failure;
 extern crate heck;
 
 #[macro_use]
@@ -16,6 +15,7 @@ use syn::DeriveInput;
 use heck::SnakeCase;
 use quote::ToTokens;
 
+
 #[proc_macro_derive(Worker)]
 pub fn derive_worker(input: TokenStream) -> TokenStream {
 
@@ -26,7 +26,6 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
     };
 
     let name            = &ast.ident;
-    let mod_name        = Ident::new(&format!("{}", name).to_snake_case(), name.span());
 
     let mut call_fns    = Vec::new();
     let mut trait_fns   = Vec::new();
@@ -35,7 +34,6 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
     for variant in dnum.variants {
         let mut args = Vec::new();
         let mut argnames  = Vec::new();
-        args.push(quote!{&mut self});
         match variant.fields {
             syn::Fields::Named(fields) => {
                 for field in fields.named {
@@ -60,35 +58,35 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
 
         let args_ = args.clone();
         trait_fns.push(quote! {
-            fn #fname(#(#args_),*);
+            fn #fname(self, #(#args_),*) -> Box<Future<Item=Option<Self>,Error=()> + Sync + Send>;
         });
 
         let name_       = name.clone();
         let varname_    = varname.clone();
         let argnames_   = argnames.clone();
-        call_fns.push(quote! {
-            pub fn #fname(#(#args),*) -> impl futures::Future<Item=(), Error=futures::sync::mpsc::SendError<#name>> {
+        call_fns.push(if argnames.len() > 0 {quote! {
+            pub fn #fname(&mut self, #(#args),*) -> impl futures::Future<Item=(), Error=futures::sync::mpsc::SendError<#name>> {
                 self.tx.clone().send(#name_::#varname_{#(#argnames_),*}).and_then(|_|Ok(()))
             }
-        });
+        }} else { quote! {
+            pub fn #fname(&mut self, #(#args),*) -> impl futures::Future<Item=(), Error=futures::sync::mpsc::SendError<#name>> {
+                self.tx.clone().send(#name_::#varname_).and_then(|_|Ok(()))
+            }
+        }});
 
         let argnames_ = argnames.clone();
-        matches.push(quote! {
-            #name::#varname { #(#argnames),* } => self.t.#fname(#(#argnames_),*),
-        });
+        matches.push( if argnames.len() > 0 { quote! {
+            #name::#varname { #(#argnames),* } => t.#fname(#(#argnames_),*)
+        }} else { quote! {
+            #name::#varname => t.#fname()
+        }});
     }
 
-    let expanded = quote! {mod #mod_name {
-        use super::#name;
+    let expanded = quote! {
         use futures;
         use futures::Stream;
         use futures::Sink;
         use futures::Future;
-
-        pub struct Job<T: Worker> {
-            t:  T,
-            rx: futures::sync::mpsc::Receiver<#name>,
-        }
 
         #[derive(Clone)]
         pub struct Handle {
@@ -98,42 +96,35 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
             #(#call_fns)*
         }
 
-        pub trait Worker {
+        pub trait Worker
+            where Self: Sized,
+        {
             #(#trait_fns)*
+
+            fn canceled(self) {}
         }
 
-        pub fn spawn<T: Worker> (buffer: usize, t: T) -> (Job<T>, Handle) {
+        pub fn spawn<T: Worker> (buffer: usize, t: T) -> (impl Future<Item=(), Error=()>, Handle) {
             let (tx,rx) = futures::sync::mpsc::channel(buffer);
 
+
+            let ft = rx.fold(t, |t, m|{
+                match m {
+                    #(#matches),*
+                }.and_then(|v|v.ok_or(()))
+            }).and_then(|t|{
+                t.canceled();
+                Ok(())
+            });
+
             (
-                Job {
-                    t,
-                    rx,
-                },
+                ft,
                 Handle {
                     tx,
                 },
-                )
+            )
         }
-
-        // The generated impl.
-        impl<T: Worker> futures::Future for Job<T> {
-            type Item  = ();
-            type Error = ();
-
-            fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-                loop {
-                    match self.rx.poll()? {
-                        futures::Async::NotReady     => return Ok(futures::Async::NotReady),
-                        futures::Async::Ready(None)  => return Ok(futures::Async::Ready(())),
-                        futures::Async::Ready(Some(m)) => match m {
-                            #(#matches),*
-                        }
-                    }
-                }
-            }
-        }
-    }};
+    };
 
     // Hand the output tokens back to the compiler.
     expanded.into()
