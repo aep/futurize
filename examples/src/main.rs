@@ -6,6 +6,8 @@ extern crate tokio;
 extern crate failure;
 
 use futures::Future;
+use std::time::{Duration, Instant};
+use futures::Stream;
 
 
 pub mod stuff {
@@ -13,7 +15,7 @@ pub mod stuff {
     pub enum Command{
         #[returns = "(u8, u32)"]
         Hello{d: u32},
-        #[returns = "std::vec::Vec<u8>"]
+        #[returns = "Vec<u8>"]
         Stop,
     }
 }
@@ -34,6 +36,11 @@ impl stuff::Worker for Worker {
         Box::new(futures::future::ok((None, vec![8,2])))
     }
 
+    fn interval(self, _now : std::time::Instant) -> Box<Future<Item=Option<Self>, Error=()> + Sync + Send> {
+        println!("interval");
+        Box::new(futures::future::ok(Some(self)))
+    }
+
     fn canceled(self) {
         println!("canceled");
     }
@@ -41,7 +48,10 @@ impl stuff::Worker for Worker {
 
 pub fn main() {
     tokio::run(futures::lazy(||{
-        let (worker, mut handle) = stuff::spawn(100, Worker::default());
+        let gc = tokio::timer::Interval::new(Instant::now(), Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(2));
+        let gc = gc.map_err(|e|panic!(e));
+        let (worker, mut handle) = stuff::spawn_with_interval(100, Worker::default(), gc);
         tokio::spawn(worker);
         handle.hello(4)
         .and_then(move |r|{

@@ -135,6 +135,7 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
         matches.push(mcall);
     }
 
+    let matches_ = matches.clone();
     let expanded = quote! {
         use futures;
         use futures::Stream;
@@ -142,6 +143,8 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
         use futures::Future;
         use futures::sync::oneshot;
         use failure::Error;
+        use std::time::Instant;
+        use futures::future::Either;
 
         #[derive(Clone)]
         pub struct Handle {
@@ -161,6 +164,9 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
             #(#trait_fns)*
 
             fn canceled(self) {}
+            fn interval(self, Instant) -> Box<Future<Item=Option<Self>, Error=()> + Sync + Send> {
+                panic!("must implement Worker::interval if using spawn_with_interval");
+            }
         }
 
         pub fn spawn<T: Worker> (buffer: usize, t: T)
@@ -169,10 +175,45 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
         {
             let (tx,rx) = futures::sync::mpsc::channel(buffer);
 
-
             let ft = rx.fold(t, |t, (ret, m) : (oneshot::Sender<Return>, #name)|{
                 match m {
                     #(#matches),*
+                }
+            }).and_then(|t|{
+                t.canceled();
+                Ok(())
+            });
+
+            (
+                ft,
+                Handle {
+                    tx,
+                },
+            )
+        }
+
+        pub fn spawn_with_interval<T: Worker, I: Stream<Item=Instant, Error=()>> (buffer: usize, t: T, i : I)
+            -> (impl Future<Item=(), Error=()>, Handle)
+            where T: 'static + Send + Sync
+        {
+            let (tx,rx) = futures::sync::mpsc::channel(buffer);
+
+            let i  = i.map(|i|Either::A(i));
+            let rx = rx.map(|i|Either::B(i));
+            let rx = rx.select(i);
+
+            let ft = rx.fold(t, |t, either : Either<Instant, (oneshot::Sender<Return>, #name)>|{
+                match either {
+                    Either::A(i) => {
+                        let ft = t.interval(i)
+                            .and_then(|v|{
+                                v.ok_or(())
+                            });
+                        Box::new(ft) as Box<Future<Item=T,Error=()> + Send + Sync>
+                    },
+                    Either::B((ret,m)) => match m {
+                        #(#matches_),*
+                    }
                 }
             }).and_then(|t|{
                 t.canceled();
