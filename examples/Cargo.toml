@@ -1,0 +1,14 @@
+[package]
+name = "futurize-examples"
+version = "0.3.0"
+authors = ["Arvid E. Picciani <aep@exys.org>"]
+license = "MIT"
+description = "Future worker boilerplate codgen"
+repository = "https://github.com/aep/futurize"
+
+[dependencies]
+futurize        = {path="../lib"}
+futurize-derive = {path="../derive"}
+futures         = "0.1.23"
+tokio           = "0.1.7"
+failure         = "0.1.2"
