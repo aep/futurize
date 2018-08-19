@@ -7,12 +7,13 @@ extern crate failure;
 
 use futures::Future;
 
+
 pub mod stuff {
     #[derive(Worker)]
     pub enum Command{
-        #[returns(u8,u32)]
+        #[returns = "(u8, u32)"]
         Hello{d: u32},
-        #[returns(u8)]
+        #[returns = "std::vec::Vec<u8>"]
         Stop,
     }
 }
@@ -29,8 +30,8 @@ impl stuff::Worker for Worker {
         Box::new(futures::future::ok((Some(self), (8,32))))
     }
 
-    fn stop(self) -> Box<Future<Item=(Option<Self>, u8), Error=()> + Sync + Send> {
-        Box::new(futures::future::ok((None, 8)))
+    fn stop(self) -> Box<Future<Item=(Option<Self>, Vec<u8>), Error=()> + Sync + Send> {
+        Box::new(futures::future::ok((None, vec![8,2])))
     }
 
     fn canceled(self) {

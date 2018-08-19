@@ -58,28 +58,19 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
         for attr in variant.attrs {
             if attr.path.segments.len() == 1 {
                 if format!("{}", attr.path.segments[0].ident) == "returns" {
-                    let meta = attr.interpret_meta().unwrap();
+                    let meta = attr.interpret_meta().expect("cannot parse as meta");
                     let meta = match meta {
-                        syn::Meta::List(m) => m,
-                        _ =>  panic!("expected syntax like '#[returns(u8)]"),
+                        syn::Meta::NameValue(m) => m,
+                        _ =>  panic!("needs name value pair like '#[returns = \"u8\"]"),
                     };
-                    if meta.nested.len() == 1 {
-                        let meta = match meta.nested[0] {
-                            syn::NestedMeta::Meta(ref m) => m,
-                            _ => panic!("expected syntax like '#[returns(u8)]"),
-                        };
-                        returns = meta.into_token_stream();
-                    } else {
-                        let mut rs = Vec::new();
-                        for meta in meta.nested {
-                            let meta = match meta {
-                                syn::NestedMeta::Meta(ref m) => m,
-                                _ => panic!("expected syntax like '#[returns(u8)]"),
-                            };
-                            rs.push(meta.into_token_stream());
-                        };
-                        returns = quote!{(#(#rs),*)};
-                    }
+
+                    let meta = match meta.lit {
+                        syn::Lit::Str(s) => s.value(),
+                        _ =>  panic!("needs name value pair like '#[returns = \"u8\"]"),
+                    };
+
+                    let meta : syn::Type = syn::parse_str(&meta).unwrap();
+                    returns = meta.into_token_stream();
                 }
             }
         }
