@@ -1,6 +1,6 @@
 [package]
 name = "futurize"
-version = "0.3.0"
+version = "0.4.1"
 authors = ["Arvid E. Picciani <aep@exys.org>"]
 license = "MIT"
 description = "Future worker boilerplate codgen"
@@ -8,3 +8,4 @@ repository = "https://github.com/aep/futurize"
 
 
 [dependencies]
+futures         = "0.1.23"
