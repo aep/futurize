@@ -1,4 +1,4 @@
-#![recursion_limit="256"]
+#![recursion_limit="512"]
 
 extern crate proc_macro;
 extern crate proc_macro2;
@@ -84,7 +84,7 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
 
         let args_ = args.clone();
         trait_fns.push(quote! {
-            fn #fname(self, #(#args_),*) -> Box<Future<Item=(Option<Self>, #returns),Error=()> + Sync + Send>;
+            fn #fname(self, #(#args_),*) -> R<Self,#returns>;
         });
 
         let name_       = name.clone();
@@ -101,6 +101,7 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
                 self.tx.clone().send((tx, #callarg))
                     .map_err(Error::from)
                     .and_then(|_|rx.map_err(Error::from))
+                    .and_then(|r|r)
                     .map(|v|{
                         match v {
                             Return::#varname_(r) => r,
@@ -112,22 +113,30 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
         });
 
         let argnames_ = argnames.clone();
+        let then = quote!{
+            then(|v|{
+                match v {
+                    Err((s,e)) => {
+                        ret.send(Err(e)).ok();
+                        s
+                    },
+                    Ok((s,v)) => {
+                        ret.send(Ok(Return::#varname_(v))).ok();
+                        s
+                    }
+                }.ok_or(())
+            })
+        };
         let mcall = if argnames.len() > 0 { quote! {
             #name::#varname { #(#argnames),* } => {
                 let ft = t.#fname(#(#argnames_),*)
-                    .and_then(|v|{
-                        ret.send(Return::#varname_(v.1)).ok();
-                        v.0.ok_or(())
-                    });
+                    .#then;
                 Box::new(ft) as Box<Future<Item=T,Error=()> + Send + Sync>
             }
         }} else { quote! {
             #name::#varname => {
                 let ft = t.#fname()
-                    .and_then(|v|{
-                        ret.send(Return::#varname_(v.1)).ok();
-                        v.0.ok_or(())
-                    });
+                    .#then;
                 Box::new(ft) as Box<Future<Item=T,Error=()> + Send + Sync>
             }
         }};
@@ -148,7 +157,7 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
 
         #[derive(Clone)]
         pub struct Handle {
-            tx: futures::sync::mpsc::Sender<(oneshot::Sender<Return>, #name)>,
+            tx: futures::sync::mpsc::Sender<(oneshot::Sender<Result<Return,Error>>, #name)>,
         }
         impl Handle {
             #(#call_fns)*
@@ -158,9 +167,12 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
             #(#rets),*
         }
 
+        pub type R<S: Worker + Sized, T> = Box<Future<Item=(Option<S>, T), Error=(Option<S>, Error)> + Sync + Send>;
+
         pub trait Worker
             where Self: Sized,
         {
+
             #(#trait_fns)*
 
             fn canceled(self) {}
@@ -175,7 +187,7 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
         {
             let (tx,rx) = futures::sync::mpsc::channel(buffer);
 
-            let ft = rx.fold(t, |t, (ret, m) : (oneshot::Sender<Return>, #name)|{
+            let ft = rx.fold(t, |t, (ret, m) : (oneshot::Sender<Result<Return, Error>>, #name)|{
                 match m {
                     #(#matches),*
                 }
@@ -202,7 +214,7 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
             let rx = rx.map(|i|Either::B(i));
             let rx = rx.select(i);
 
-            let ft = rx.fold(t, |t, either : Either<Instant, (oneshot::Sender<Return>, #name)>|{
+            let ft = rx.fold(t, |t, either : Either<Instant, (oneshot::Sender<Result<Return, Error>>, #name)>|{
                 match either {
                     Either::A(i) => {
                         let ft = t.interval(i)
